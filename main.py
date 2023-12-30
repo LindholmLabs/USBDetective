@@ -2,7 +2,7 @@ import win32com.client
 import pythoncom
 import threading
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import ttk
 import time
 
 
@@ -10,18 +10,15 @@ class USBDeviceDetector(threading.Thread):
     def __init__(self, update_callback):
         super().__init__()
         self.update_callback = update_callback
-        self.devices_before = self.get_pnp_devices()
         self.running = True
-
-    def get_pnp_devices(self):
-        pythoncom.CoInitialize()  # Initialize COM in the thread
-        wmi = win32com.client.GetObject("winmgmts:")
-        pnp_devices = wmi.InstancesOf("Win32_PnPEntity")
-        devices = {device.DeviceID: device.Name for device in pnp_devices}
-        pythoncom.CoUninitialize()  # Uninitialize COM
-        return devices
+        self.devices_before = {}
 
     def run(self):
+        pythoncom.CoInitialize()  # Initialize COM in the thread
+
+        # Initialize devices_before in the thread after COM initialization
+        self.devices_before = self.get_pnp_devices()
+
         while self.running:
             time.sleep(1)
             devices_now = self.get_pnp_devices()
@@ -34,6 +31,13 @@ class USBDeviceDetector(threading.Thread):
 
             self.devices_before = devices_now
 
+        pythoncom.CoUninitialize()  # Uninitialize COM
+
+    def get_pnp_devices(self):
+        wmi = win32com.client.GetObject("winmgmts:")
+        pnp_devices = wmi.InstancesOf("Win32_PnPEntity")
+        return {device.DeviceID: device.Name for device in pnp_devices}
+
     def stop(self):
         self.running = False
 
@@ -41,29 +45,41 @@ class USBDeviceDetector(threading.Thread):
 class USBDeviceLoggerGUI:
     def __init__(self, root):
         self.root = root
-        root.title("USB Device Logger")
+        root.title("USBDetective")
 
-        # Create a ScrolledText widget for logging device changes
-        self.log = scrolledtext.ScrolledText(root, state='disabled', width=70, height=20)
-        self.log.grid(row=0, column=0, padx=10, pady=10)
+        # Configure the grid to expand the cell containing the Treeview widget
+        root.grid_rowconfigure(0, weight=1)
+        root.grid_columnconfigure(0, weight=1)
+
+        # Create a Treeview widget for logging device changes
+        self.log = ttk.Treeview(root, columns=('DeviceID',))
+        self.log.grid(row=0, column=0, padx=10, pady=10, sticky='nsew')
+
+        # Configure Treeview columns
+        self.log.heading('#0', text='Status')
+        self.log.column('#0', stretch=tk.YES)
+        self.log.heading('DeviceID', text='Device ID')
+        self.log.column('DeviceID', stretch=tk.YES)
+
+        self.log.bind("<Double-1>", self.on_double_click)
 
         # Start the USB device detection in a separate thread
         self.detector = USBDeviceDetector(self.log_device_changes)
         self.detector.start()
 
     def log_device_changes(self, new_devices, removed_devices):
-        message = ""
         for device_id in new_devices:
-            message += f"Connected: {device_id}\n"
+            self.log.insert('', 'end', text='Connected', values=(device_id,))
         for device_id in removed_devices:
-            message += f"Disconnected: {device_id}\n"
+            self.log.insert('', 'end', text='Disconnected', values=(device_id,))
 
-        # Update the log widget with the detected changes
-        if message:
-            self.log.configure(state='normal')
-            self.log.insert(tk.END, message)
-            self.log.configure(state='disabled')
-            self.log.yview(tk.END)
+    def on_double_click(self, event):
+        item = self.log.selection()[0]
+        device_id = self.log.item(item, 'values')[0]
+        self.open_device_manager(device_id)
+
+    def open_device_manager(self, device_id):
+        pass
 
     def on_close(self):
         # Ensure thread is properly stopped before closing the GUI
